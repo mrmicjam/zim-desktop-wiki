@@ -206,7 +206,7 @@ class TasksView(IndexView):
 		except sqlite3.OperationalError:
 			raise ValueError('No tasklist in index')
 
-	def list_open_tasks(self, parent=None):
+	def list_open_tasks(self, parent=None, source=None):
 		'''List tasks
 		@param parent: the parent task (as returned by this method) or C{None} to list
 		all top level tasks
@@ -217,26 +217,37 @@ class TasksView(IndexView):
 		else:
 			parentid = 0
 
-		# Sort:
-		#  started tasks by prio, due date, page + id to keep order in page
-		#  not-started tasks by start date, ...
-		today = str(datetime.date.today())
-		for row in self.db.execute('''
-			SELECT tasklist.* FROM tasklist
-			LEFT JOIN pages ON tasklist.source = pages.id
-			WHERE tasklist.open=1 and tasklist.parent=? and tasklist.start<=?
-			ORDER BY tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
-			''', (parentid, today)
-		):
-			yield row
-		for row in self.db.execute('''
-			SELECT tasklist.* FROM tasklist
-			LEFT JOIN pages ON tasklist.source = pages.id
-			WHERE tasklist.open=1 and tasklist.parent=? and tasklist.start>?
-			ORDER BY tasklist.start ASC, tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
-			''', (parentid, today)
-		):
-			yield row
+		if source:
+			today = str(datetime.date.today())
+			for row in self.db.execute('''
+				SELECT tasklist.* FROM tasklist
+				LEFT JOIN pages ON tasklist.source = pages.id
+				WHERE tasklist.open=1 and tasklist.parent=? and pages.name=? and tasklist.start<=?
+				ORDER BY tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
+				''', (parentid, source, today)
+			):
+				yield row
+		else:
+			# Sort:
+			#  started tasks by prio, due date, page + id to keep order in page
+			#  not-started tasks by start date, ...
+			today = str(datetime.date.today())
+			for row in self.db.execute('''
+				SELECT tasklist.* FROM tasklist
+				LEFT JOIN pages ON tasklist.source = pages.id
+				WHERE tasklist.open=1 and tasklist.parent=? and tasklist.start<=?
+				ORDER BY tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
+				''', (parentid, today)
+			):
+				yield row
+			for row in self.db.execute('''
+				SELECT tasklist.* FROM tasklist
+				LEFT JOIN pages ON tasklist.source = pages.id
+				WHERE tasklist.open=1 and tasklist.parent=? and tasklist.start>?
+				ORDER BY tasklist.start ASC, tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
+				''', (parentid, today)
+			):
+				yield row
 
 	def list_open_tasks_flatlist(self):
 		'''List tasks

@@ -23,7 +23,6 @@ from zim.gui.widgets import LEFT_PANE, PANE_POSITIONS, BrowserTreeView, populate
 	WindowSidePaneWidget, widget_set_css
 from zim.gui.pageview import FIND_REGEX, SCROLL_TO_MARK_MARGIN, _is_heading_tag
 
-
 # FIXME, these methods should be supported by pageview - need anchors - now it is a HACK
 _is_heading = lambda iter: bool(list(filter(_is_heading_tag, iter.get_tags())))
 
@@ -140,7 +139,7 @@ class ToCTreeModel(Gtk.TreeStore):
 		Gtk.TreeStore.__init__(self, str) # TEXT_COL
 		self.is_empty = True
 
-	def populate(self, parsetree, show_h1):
+	def populate(self, parsetree, show_h1, task_list=None):
 		self.clear()
 		headings = []
 		for heading in parsetree.findall(HEADING):
@@ -155,6 +154,10 @@ class ToCTreeModel(Gtk.TreeStore):
 
 		self.is_empty = not bool(headings)
 
+		task_folder = self.append(None, ("tasks", ))
+		for task in task_list:
+			self.append(task_folder, (task[-1], ))
+
 		stack = [(-1, None)]
 		for level, text in headings:
 			assert level > -1 # just to be sure
@@ -164,6 +167,7 @@ class ToCTreeModel(Gtk.TreeStore):
 			iter = self.append(parent, (text,))
 			stack.append((level, iter))
 
+		
 
 
 
@@ -205,10 +209,18 @@ class ToCWidget(ConnectorMixin, Gtk.ScrolledWindow):
 	def load_page(self, page):
 		model = self.treeview.get_model()
 		tree = page.get_parsetree()
+
+		from zim.plugins.tasklist.indexer import TasksView
+
+		index = self.pageview.notebook.index
+		tasksview = TasksView.new_from_index(index)
+		tasks = tasksview.list_open_tasks(source=page.name)
+		# print(tasks)
+
 		if tree is None:
 			model.clear()
 		else:
-			model.populate(tree, self.show_h1)
+			model.populate(tree, self.show_h1, tasks)
 		self.treeview.expand_all()
 		self.emit('changed')
 
