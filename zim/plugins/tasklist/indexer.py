@@ -11,11 +11,11 @@ import zim.datetimetz as datetime
 
 from zim.notebook import Path
 from zim.notebook.index.base import IndexerBase, IndexView
-from zim.notebook.index.pages import PagesViewInternal
+from zim.notebook.index.pages import PagesViewInternal, HRef
 from zim.formats import get_format, \
 	UNCHECKED_BOX, CHECKED_BOX, XCHECKED_BOX, BULLET, TAG, \
 	HEADING, PARAGRAPH, BLOCK, NUMBEREDLIST, BULLETLIST, LISTITEM, STRIKE, \
-	Visitor, VisitorSkip
+	Visitor, VisitorSkip, LINK
 from zim.tokenparser import skip_to_end_token, TEXT, END
 
 from zim.plugins.journal import daterange_from_path
@@ -89,7 +89,8 @@ class TasksIndexer(IndexerBase):
 			start TEXT,
 			due TEXT,
 			tags TEXT,
-			description TEXT
+			description TEXT,
+			dependency_page TEXT
 		);
 		INSERT OR REPLACE INTO zim_index VALUES (%r, %r);
 	''' % (PLUGIN_NAME, PLUGIN_DB_FORMAT)
@@ -173,8 +174,8 @@ class TasksIndexer(IndexerBase):
 		for task, children in tasks:
 			task[4] = ','.join(sorted(task[4])) # make tag list a string
 			db.execute(
-				'INSERT INTO tasklist(source, parent, haschildren, hasopenchildren, open, prio, start, due, tags, description)'
-				'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+				'INSERT INTO tasklist(source, parent, haschildren, hasopenchildren, open, prio, start, due, tags, description, dependency_page)'
+				'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 				(pageid, parentid, bool(children), any(c[0][0] for c in children)) + tuple(task)
 			)
 			if children:
@@ -205,6 +206,42 @@ class TasksView(IndexView):
 			db.execute('SELECT * FROM tasklist LIMIT 1')
 		except sqlite3.OperationalError:
 			raise ValueError('No tasklist in index')
+
+	def list_tasks_in_work_order(self, source):
+		'''
+		list tasks in order that they can be worked
+		:param source:
+		:return:
+			row dict with keys ['id', 'source', 'parent', 'haschildren', 'hasopenchildren', 'open', 'prio', 'start', 'due', 'tags', 'description']
+		'''
+		import networkx as nx
+		parent_id = 0
+		G = nx.DiGraph()
+
+		tasks = {}
+		def add_nodes(parent, source, dependant):
+			for row in self.db.execute('''
+							SELECT tasklist.* FROM tasklist
+							LEFT JOIN pages ON tasklist.source = pages.id
+							WHERE tasklist.open=1 and tasklist.parent=? and pages.name=?
+							ORDER BY tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
+							''', (parent, source)):
+				G.add_node(row['id'])
+				tasks[row['id']] = row
+
+				if dependant:
+					# parent depends on child to complete to start
+					G.add_edge(row['id'], dependant)
+				if row['dependency_page']:
+					_, dep_page = self._pages.resolve_link(Path(source), HRef.new_from_wiki_link(row['dependency_page']))
+					add_nodes(0, dep_page.name, row['id'])
+
+				add_nodes(row['id'], source, row['id'])
+
+		add_nodes(parent_id, source, parent_id)
+		for id in nx.topological_sort(G):
+			yield tasks[id]
+
 
 	def list_open_tasks(self, parent=None, source=None):
 		'''List tasks
@@ -466,6 +503,7 @@ class TaskParser(object):
 
 		text = []
 		tags = set(tags) # copy
+		child_pages = None
 
 		token_iter = iter(tokens)
 		for t in token_iter:
@@ -475,12 +513,14 @@ class TaskParser(object):
 				tags.add(t[1]['name'])
 			elif t[0] == STRIKE:
 				skip_to_end_token(token_iter, STRIKE)
+			elif t[0] == LINK and 'href' in t[1]:
+				child_pages = t[1]['href']
 			else:
 				pass # ignore all other markup
 
-		return self._task_from_text(''.join(text), isopen, tags, parent)
+		return self._task_from_text(''.join(text), isopen, tags, parent, child_pages)
 
-	def _task_from_text(self, text, isopen=True, tags=None, parent=None):
+	def _task_from_text(self, text, isopen=True, tags=None, parent=None, child_pages=None):
 		# Return task record for single line of text
 
 		prio = text.count('!')
@@ -505,5 +545,5 @@ class TaskParser(object):
 			except ValueError:
 				logger.warn('Invalid date format in task: %s', string)
 
-		return [isopen, prio, start, due, tags, str(text.strip())]
+		return [isopen, prio, start, due, tags, str(text.strip()), child_pages]
 			# 0:open, 1:prio, 2:start, 3:due, 4:tags, 5:desc

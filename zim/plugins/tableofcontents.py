@@ -156,7 +156,7 @@ class ToCTreeModel(Gtk.TreeStore):
 
 		task_folder = self.append(None, ("tasks", ))
 		for task in task_list:
-			self.append(task_folder, (task[-1], ))
+			self.append(task_folder, (task['description'], ))
 
 		stack = [(-1, None)]
 		for level, text in headings:
@@ -214,7 +214,8 @@ class ToCWidget(ConnectorMixin, Gtk.ScrolledWindow):
 
 		index = self.pageview.notebook.index
 		tasksview = TasksView.new_from_index(index)
-		tasks = tasksview.list_open_tasks(source=page.name)
+		tasks = tasksview.list_tasks_in_work_order(source=page.name)
+		# tasks = tasksview.list_open_tasks(source=page.name)
 		# print(tasks)
 
 		if tree is None:
