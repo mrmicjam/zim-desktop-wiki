@@ -357,7 +357,7 @@ class TaskParser(object):
 					# [isopen, prio, start, due]
 
 		def _is_list_heading(task):
-			isopen, prio, start, due, tags, text = task[0]
+			isopen, prio, start, due, tags, text, dependant_page = task[0]
 			words = text.strip().split()
 			if self.task_label_re.match(words[0]) \
 			and all(w.startswith('@') or w == ':' for w in words[1:]):
