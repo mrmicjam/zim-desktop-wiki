@@ -25,6 +25,7 @@ from zim.gui.pageview import FIND_REGEX, SCROLL_TO_MARK_MARGIN, _is_heading_tag
 
 # FIXME, these methods should be supported by pageview - need anchors - now it is a HACK
 _is_heading = lambda iter: bool(list(filter(_is_heading_tag, iter.get_tags())))
+_is_task = lambda iter: bool(list(filter(_is_heading_tag, iter.get_tags())))
 
 def find_heading(buffer, heading):
 	'''Find a heading
@@ -54,8 +55,33 @@ def find_heading(buffer, heading):
 			return None
 
 
+def find_task(buffer, heading):
+	'''Find a heading
+	@param buffer: the C{Gtk.TextBuffer}
+	@param heading: text of the heading
+	@returns: a C{Gtk.TextIter} for the new cursor position or C{None}
+	'''
+	regex = "^.*%s$" % re.escape(heading)
+	with buffer.tmp_cursor():
+		if buffer.finder.find(regex, FIND_REGEX):
+			iter = buffer.get_insert_iter()
+			start = iter.get_offset()
+			return iter
+		else:
+			return None
+
 def select_heading(buffer, heading):
 	iter = find_heading(buffer, heading)
+	if iter:
+		buffer.place_cursor(iter)
+		buffer.select_line()
+		return True
+	else:
+		return False
+
+
+def select_task(buffer, heading):
+	iter = find_task(buffer, heading)
 	if iter:
 		buffer.place_cursor(iter)
 		buffer.select_line()
@@ -114,6 +140,7 @@ class ToCPageViewExtension(PageViewExtension):
 
 
 TEXT_COL = 0
+PAGE_COL = 1
 
 class ToCTreeView(BrowserTreeView):
 
@@ -124,19 +151,29 @@ class ToCTreeView(BrowserTreeView):
 			# Allow select multiple
 
 		cell_renderer = Gtk.CellRendererText()
+
+		page_cell_renderer = Gtk.CellRendererText()
+		page_cell_renderer.set_property("size-points", 4)
+
 		if ellipsis:
 			cell_renderer.set_property('ellipsize', Pango.EllipsizeMode.END)
+
 		column = Gtk.TreeViewColumn('_heading_', cell_renderer, text=TEXT_COL)
 		column.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
 			# Without this sizing, column width only grows and never shrinks
 		self.append_column(column)
+
+		column2 = Gtk.TreeViewColumn('_page_', page_cell_renderer, text=PAGE_COL)
+		column2.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
+		# Without this sizing, column width only grows and never shrinks
+		self.append_column(column2)
 
 
 
 class ToCTreeModel(Gtk.TreeStore):
 
 	def __init__(self):
-		Gtk.TreeStore.__init__(self, str) # TEXT_COL
+		Gtk.TreeStore.__init__(self, str, str) # TEXT_COL
 		self.is_empty = True
 
 	def populate(self, parsetree, show_h1, task_list=None):
@@ -152,11 +189,14 @@ class ToCTreeModel(Gtk.TreeStore):
 		and all(h[0] > 1 for h in headings[1:]):
 			headings.pop(0) # do not show first heading
 
-		self.is_empty = not bool(headings)
+		task_folder = self.append(None, ("tasks", ""))
 
-		task_folder = self.append(None, ("tasks", ))
+		tasks = False
 		for task in task_list:
-			self.append(task_folder, (task['description'], ))
+			tasks = True
+			self.append(task_folder, (task['description'], task['name']))
+
+		self.is_empty = not bool(headings) and not tasks
 
 		stack = [(-1, None)]
 		for level, text in headings:
@@ -164,7 +204,7 @@ class ToCTreeModel(Gtk.TreeStore):
 			while stack[-1][0] >= level:
 				stack.pop()
 			parent = stack[-1][1]
-			iter = self.append(parent, (text,))
+			iter = self.append(parent, (text, ""))
 			stack.append((level, iter))
 
 		
@@ -226,17 +266,49 @@ class ToCWidget(ConnectorMixin, Gtk.ScrolledWindow):
 		self.emit('changed')
 
 	def on_heading_activated(self, treeview, path, column):
-		self.select_heading(path)
+		model = self.treeview.get_model()
+		page = model[path][PAGE_COL]
 
-	def select_heading(self, path):
+		if page:
+			self.select_task(path, model)
+		self.select_heading(path, model)
+
+
+	def select_task(self, path, model=None):
 		'''Returns a C{Gtk.TextIter} for a C{Gtk.TreePath} pointing to a heading
 		or C{None}.
 		'''
-		model = self.treeview.get_model()
+		if not model:
+			model = self.treeview.get_model()
+		text = model[path][TEXT_COL]
+		page = model[path][PAGE_COL]
+
+		if self.pageview.page.name != page:
+			# Navigate to the page
+			self.pageview.navigation.open_page(Path(page))
+
+		textview = self.pageview.textview
+		buffer = textview.get_buffer()
+
+		if select_task(buffer, text):
+			textview.scroll_to_mark(buffer.get_insert(), SCROLL_TO_MARK_MARGIN, False, 0, 0)
+			return True
+		else:
+			return False
+
+
+	def select_heading(self, path, model=None):
+		'''Returns a C{Gtk.TextIter} for a C{Gtk.TreePath} pointing to a heading
+		or C{None}.
+		'''
+		if not model:
+			model = self.treeview.get_model()
 		text = model[path][TEXT_COL]
 
 		textview = self.pageview.textview
 		buffer = textview.get_buffer()
+
+		# not recursive, there is another function
 		if select_heading(buffer, text):
 			textview.scroll_to_mark(buffer.get_insert(), SCROLL_TO_MARK_MARGIN, False, 0, 0)
 			return True

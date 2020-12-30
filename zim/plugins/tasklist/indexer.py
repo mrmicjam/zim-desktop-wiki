@@ -219,9 +219,10 @@ class TasksView(IndexView):
 		G = nx.DiGraph()
 
 		tasks = {}
+
 		def add_nodes(parent, source, dependant):
 			for row in self.db.execute('''
-							SELECT tasklist.* FROM tasklist
+							SELECT tasklist.*, pages.name as name FROM tasklist
 							LEFT JOIN pages ON tasklist.source = pages.id
 							WHERE tasklist.open=1 and tasklist.parent=? and pages.name=?
 							ORDER BY tasklist.prio DESC, tasklist.due ASC, pages.name ASC, tasklist.id ASC
@@ -231,6 +232,7 @@ class TasksView(IndexView):
 
 				if dependant:
 					# parent depends on child to complete to start
+					# arg2 depends on arg1 being finished first
 					G.add_edge(row['id'], dependant)
 				if row['dependency_page']:
 					_, dep_page = self._pages.resolve_link(Path(source), HRef.new_from_wiki_link(row['dependency_page']))
@@ -239,8 +241,13 @@ class TasksView(IndexView):
 				add_nodes(row['id'], source, row['id'])
 
 		add_nodes(parent_id, source, parent_id)
+		added = set()
 		for id in nx.topological_sort(G):
+			if set(G.predecessors(id)) & added:
+				# task has predecessors that are listed as open
+				continue
 			yield tasks[id]
+			added.add(id)
 
 
 	def list_open_tasks(self, parent=None, source=None):
