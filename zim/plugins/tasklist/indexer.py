@@ -245,6 +245,8 @@ class TasksView(IndexView):
 		for id in nx.topological_sort(G):
 			if set(G.predecessors(id)) & added:
 				# task has predecessors that are listed as open
+				# add to the list so that its parents don't get added either
+				added.add(id)
 				continue
 			yield tasks[id]
 			added.add(id)
